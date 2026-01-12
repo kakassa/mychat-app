@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8">
+<title>Chat Avançado</title>
+<style>
+/* Layout geral */
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: linear-gradient(to right, #74ebd5, #ACB6E5);
+  margin: 0;
+  padding: 20px;
+  color: #333;
+}
+
+h3, h4 {
+  margin: 10px 0 5px 0;
+}
+
+/* Input e botão */
+input, button {
+  padding: 8px 12px;
+  margin: 5px 0;
+  border-radius: 8px;
+  border: 1px solid #ccc;
+  font-size: 14px;
+}
+
+button {
+  background-color: #6C63FF;
+  color: white;
+  border: none;
+  cursor: pointer;
+  transition: 0.3s;
+}
+
+button:hover {
+  background-color: #5751d9;
+}
+
+/* Lista de usuários */
+#users {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+#users li {
+  padding: 8px 12px;
+  margin-bottom: 5px;
+  background-color: #fff;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: 0.3s;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+}
+
+#users li:hover {
+  background-color: #f0f0f0;
+}
+
+/* Chat grupo */
+#chat {
+  border: 1px solid #ccc;
+  padding: 10px;
+  height: 250px;
+  overflow-y: scroll;
+  border-radius: 12px;
+  background-color: #ffffffcc;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+  margin-bottom: 10px;
+}
+
+/* Digitação */
+.typing {
+  font-style: italic;
+  color: #555;
+  margin-bottom: 10px;
+}
+
+/* Chats privados */
+.private-chat {
+  border: 1px solid #ccc;
+  border-radius: 12px;
+  padding: 10px;
+  margin-top: 15px;
+  background-color: #f9f9f9cc;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+}
+
+.private-chat input {
+  width: 100%;
+  margin-top: 5px;
+}
+
+/* Mensagens */
+b {
+  color: #6C63FF;
+}
+
+/* Scrollbar estilizada */
+#chat::-webkit-scrollbar,
+.private-chat div::-webkit-scrollbar {
+  width: 8px;
+}
+
+#chat::-webkit-scrollbar-thumb,
+.private-chat div::-webkit-scrollbar-thumb {
+  background-color: #6C63FF;
+  border-radius: 4px;
+}
+</style>
+</head>
+<body>
+<input id="username" placeholder="Seu nome">
+<button id="enterChat">Entrar no chat</button>
+
+<h3>Usuários Online</h3>
+<ul id="users"></ul>
+
+<h3>Chat Grupo</h3>
+<div id="chat"></div>
+<input id="message" placeholder="Digite a mensagem">
+<button id="send">Enviar</button>
+<div id="typing" class="typing"></div>
+
+<div id="privateChats"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const socket = io();
+let myId = "";
+let username = "";
+
+const usersList = document.getElementById("users");
+const chat = document.getElementById("chat");
+const messageInput = document.getElementById("message");
+const typingDiv = document.getElementById("typing");
+const privateChats = document.getElementById("privateChats");
+
+document.getElementById("enterChat").onclick = () => {
+  username = document.getElementById("username").value;
+  if(!username) return alert("Digite seu nome");
+  socket.emit("setUsername", username);
+  myId = socket.id;
+};
+
+// Grupo
+document.getElementById("send").onclick = () => {
+  const msg = messageInput.value;
+  if(!msg) return;
+  socket.emit("groupMessage", msg);
+  messageInput.value = "";
+  socket.emit("stopTypingGroup");
+};
+
+messageInput.addEventListener("input", () => {
+  if(messageInput.value)
+    socket.emit("typingGroup");
+  else
+    socket.emit("stopTypingGroup");
+});
+
+socket.on("groupMessage", ({ user, msg }) => {
+  chat.innerHTML += `<b>${user}:</b> ${msg}<br>`;
+  chat.scrollTop = chat.scrollHeight;
+});
+
+socket.on("typingGroup", (user) => {
+  typingDiv.innerText = `${user} está escrevendo...`;
+});
+
+socket.on("stopTypingGroup", () => {
+  typingDiv.innerText = "";
+});
+
+// Lista de usuários
+socket.on("updateUserList", (users) => {
+  usersList.innerHTML = "";
+  for(let id in users){
+    if(id === myId) continue;
+    const li = document.createElement("li");
+    li.innerText = users[id];
+    li.style.cursor = "pointer";
+    li.onclick = () => openPrivateChat(id, users[id]);
+    usersList.appendChild(li);
+  }
+});
+
+// Abrir chat privado
+function openPrivateChat(targetId, targetName) {
+  const roomName = [myId, targetId].sort().join("_");
+
+  if(document.getElementById(roomName)) return; // já existe
+
+  // Criar a sala privada
+  socket.emit("createPrivateRoom", { targetId });
+
+  const div = document.createElement("div");
+  div.id = roomName;
+  div.classList.add("private-chat");
+  div.innerHTML = `
+    <h4>Chat com ${targetName}</h4>
+    <div id="chat_${roomName}" style="height:200px; overflow-y:scroll;"></div>
+    <input id="input_${roomName}" placeholder="Digite a mensagem">
+    <div id="typing_${roomName}" class="typing"></div>
+  `;
+  privateChats.appendChild(div);
+
+  const input = document.getElementById(`input_${roomName}`);
+
+  input.addEventListener("input", () => {
+    if(input.value)
+      socket.emit("typingPrivate", { roomName });
+    else
+      socket.emit("stopTypingPrivate", { roomName });
+  });
+
+  input.addEventListener("keypress", (e) => {
+    if(e.key === "Enter" && input.value){
+      socket.emit("privateMessage", { roomName, msg: input.value });
+      document.getElementById(`chat_${roomName}`).innerHTML += `<b>Você:</b> ${input.value}<br>`;
+      input.value = "";
+      socket.emit("stopTypingPrivate", { roomName });
+    }
+  });
+}
+
+// Receber convite para sala privada
+socket.on("invitePrivateRoom", ({ roomName, from }) => {
+  if(document.getElementById(roomName)) return;
+  openPrivateChat(roomName.replace(`${myId}_`, ""), from); // abrir chat automaticamente
+});
+
+// Mensagens privadas
+socket.on("privateMessage", ({ user, msg, roomName }) => {
+  const chatDiv = document.getElementById(`chat_${roomName}`);
+  if(chatDiv) chatDiv.innerHTML += `<b>${user}:</b> ${msg}<br>`;
+});
+
+// Digitação privada
+socket.on("typingPrivate", (user) => {
+  const divs = document.querySelectorAll(".private-chat .typing");
+  divs.forEach(d => d.innerText = `${user} está escrevendo...`);
+});
+
+socket.on("stopTypingPrivate", () => {
+  const divs = document.querySelectorAll(".private-chat .typing");
+  divs.forEach(d => d.innerText = "");
+});
+</script>
+</body>
+</html>
